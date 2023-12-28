@@ -13,7 +13,7 @@ def attention(q, k, v, causal_mask=False):
     :return: (b, seq_len, d_model)
     """
 
-    d_k = k.shape(-1)
+    d_k = k.shape[-1]
     attention_weights = q @ k.transpose(-2, -1)  # (b, h, seq_len, seq_len)
 
     if causal_mask:
@@ -68,7 +68,7 @@ class SelfAttention(nn.Module):
 
 
 class CrossAttention(nn.Module):
-    def __init__(self, n_heads: int, d_embed: int, d_att: int, in_proj_bias: True, out_proj_bias=True):
+    def __init__(self, n_heads: int, d_embed: int, d_cross: int, d_att: int, in_proj_bias: True, out_proj_bias=True):
         super().__init__()
 
         self.n_heads = n_heads
@@ -76,11 +76,11 @@ class CrossAttention(nn.Module):
         assert d_att % n_heads == 0
         self.d_heads = d_att // n_heads
 
-        self.wq = nn.Linear(d_embed, d_att, bias=in_proj_bias)
-        self.wk = nn.Linear(d_embed, d_att, bias=in_proj_bias)
-        self.wv = nn.Linear(d_embed, d_att, bias=in_proj_bias)
+        self.q_proj = nn.Linear(d_embed, d_att, bias=in_proj_bias)
+        self.k_proj = nn.Linear(d_cross, d_att, bias=in_proj_bias)
+        self.v_proj = nn.Linear(d_cross, d_att, bias=in_proj_bias)
 
-        self.w_out = nn.Linear(d_att, d_embed, bias=out_proj_bias)
+        self.out_proj = nn.Linear(d_att, d_embed, bias=out_proj_bias)
 
     def forward(self, x, y, causal_mask=False):
         """
@@ -94,14 +94,22 @@ class CrossAttention(nn.Module):
         in_shape = q.shape
         b, seq_len, d_in = in_shape
 
-        tmp_shape = (b, seq_len, self.n_heads, self.d_heads)
+        tmp_shape = (b, -1, self.n_heads, self.d_heads)
 
-        q = self.wq(q).view(tmp_shape).transpose(1, 2)
-        k = self.wq(k).view(tmp_shape).transpose(1, 2)
-        v = self.wq(v).view(tmp_shape).transpose(1, 2)
+        # print(f"q shape : {q.shape}")
+        q = self.q_proj(q)
+        # print(f"q shape : {q.shape}")
+        q = q.view(tmp_shape).transpose(1, 2)
+        # print(f"k shape : {k.shape}")
+        k = self.k_proj(k)
+        # print(f"k shape : {k.shape}")
+        k = k.view(tmp_shape).transpose(1, 2)
+        # print(f"v shape : {v.shape}")
+        v = self.v_proj(v)
+        # print(f"v shape : {v.shape}")
+        v = v.view(tmp_shape).transpose(1, 2)
 
-        scores = attention(q, k, v, causal_mask=causal_mask) # (b, h, seq_len, d_head)
-        scores = scores.transpose(1,2).view(b, seq_len, self.d_att)
+        scores = attention(q, k, v, causal_mask=causal_mask)  # (b, h, seq_len, d_head)
+        scores = scores.transpose(1, 2).contiguous().view(b, seq_len, self.d_att)
 
-        return self.w_out(scores)
-
+        return self.out_proj(scores)

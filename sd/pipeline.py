@@ -2,6 +2,8 @@ import numpy as np
 import torch
 from tqdm import tqdm
 
+from ddpm import DDPMSampler
+
 WIDTH = 512
 HEIGHT = 512
 LATENT_WIDTH = WIDTH // 8
@@ -39,9 +41,9 @@ def generate(prompt: str, uncond_prompt: str, input_image=None, strength=0.8, do
             raise ValueError("Strength must be between 0 and 1")
 
         if idle_device:
-            to_idle: lambda x: x.to(idle_device)
+            to_idle = lambda x: x.to(idle_device)
         else:
-            to_idle: lambda x: x
+            to_idle = lambda x: x
 
         generator = torch.Generator(device=device)
 
@@ -54,7 +56,7 @@ def generate(prompt: str, uncond_prompt: str, input_image=None, strength=0.8, do
         clip = clip.to(device)
 
         # convert prompt to tokens
-        cond_tokens = tokenizer.batch_encode_plus([prompt], padding="max_length", max_lenth=77).input_ids
+        cond_tokens = tokenizer.batch_encode_plus([prompt], padding="max_length", max_length=77).input_ids
         # (b, seq_len)
         cond_tokens = torch.tensor(cond_tokens, dtype=torch.long, device=device)
         # (b, seq_len, dim)
@@ -62,7 +64,7 @@ def generate(prompt: str, uncond_prompt: str, input_image=None, strength=0.8, do
 
         if do_cfg:
             # Conditional free guidance
-            uncond_tokens = tokenizer.batch_encode_plus([uncond_prompt], padding="max_length", max_lenth=77).input_ids
+            uncond_tokens = tokenizer.batch_encode_plus([uncond_prompt], padding="max_length", max_length=77).input_ids
             uncond_tokens = torch.tensor(uncond_tokens, dtype=torch.long, device=device)
             uncond_context = clip(uncond_tokens)
 
@@ -120,7 +122,7 @@ def generate(prompt: str, uncond_prompt: str, input_image=None, strength=0.8, do
                 model_input = model_input.repeat(2, 1, 1, 1)
 
             # predicted noise by hte UNet
-            model_out = diffusion(model_input, latents, time_embedding)
+            model_out = diffusion(model_input, context, time_embedding)
 
             if do_cfg:
                 out_cond, out_uncond = model_out.chunk(2)

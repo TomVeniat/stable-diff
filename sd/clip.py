@@ -22,23 +22,23 @@ class CLIPLayer(nn.Module):
     def __init__(self, n_heads, n_embed):
         super().__init__()
 
-        self.norm_1 = nn.LayerNorm(n_embed)
-        self.norm_2 = nn.LayerNorm(n_embed)
+        self.layernorm_1 = nn.LayerNorm(n_embed)
+        self.layernorm_2 = nn.LayerNorm(n_embed)
         self.attention = SelfAttention(n_heads, n_embed, n_embed)
-        self.proj_1 = nn.Linear(n_embed, 4 * n_embed)
-        self.proj_2 = nn.Linear(4 * n_embed, n_embed)
+        self.linear_1 = nn.Linear(n_embed, 4 * n_embed)
+        self.linear_2 = nn.Linear(4 * n_embed, n_embed)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         residue = x
-        x = self.norm_1(x)
+        x = self.layernorm_1(x)
         x = self.attention(x, causal_mask=True)
         x += residue
 
         residue = x
-        x = self.norm_2(x)
-        x = self.proj_1(x)
+        x = self.layernorm_2(x)
+        x = self.linear_1(x)
         x = x * torch.sigmoid(1.702 * x)  # QuickGelu activation
-        x = self.proj_2(x)
+        x = self.linear_2(x)
 
         return x + residue
 

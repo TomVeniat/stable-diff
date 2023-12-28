@@ -62,7 +62,7 @@ class UNet(nn.Module):
             UNetResidualBlock(4 * dim, 4 * dim)
         )
 
-        self.decoder = nn.ModuleList([
+        self.decoders = nn.ModuleList([
             SwitchSequential(UNetResidualBlock(8 * dim, 4 * dim)),  # (b, 1280, H/64, W/64)
             SwitchSequential(UNetResidualBlock(8 * dim, 4 * dim)),
 
@@ -73,15 +73,26 @@ class UNet(nn.Module):
 
             SwitchSequential(UNetResidualBlock(6 * dim, 2 * dim), UNetAttentionBlock(8, 80)),
             SwitchSequential(UNetResidualBlock(4 * dim, 2 * dim), UNetAttentionBlock(8, 80)),
-            SwitchSequential(UNetResidualBlock(3 * dim, 3 * dim), UNetAttentionBlock(8, 80), UpSample(2 * dim)),
+            SwitchSequential(UNetResidualBlock(3 * dim, 2 * dim), UNetAttentionBlock(8, 80), UpSample(2 * dim)),
 
             SwitchSequential(UNetResidualBlock(3 * dim, dim), UNetAttentionBlock(8, 40)),
             SwitchSequential(UNetResidualBlock(2 * dim, dim), UNetAttentionBlock(8, 40)),
             SwitchSequential(UNetResidualBlock(2 * dim, dim), UNetAttentionBlock(8, 40)),
         ])
 
-    def forward(self, x):
-        pass
+    def forward(self, x, context, time):
+        skip_connections = []
+
+        for layers in self.encoders:
+            x = layers(x, context, time)
+            skip_connections.append(x)
+        x = self.bottleneck(x, context, time)
+
+        for layers in self.decoders:
+            x = torch.cat([x, skip_connections.pop()], dim=1)
+            x = layers(x, context, time)
+
+        return x
 
 
 class UNetAttentionBlock(nn.Module):
@@ -96,11 +107,11 @@ class UNetAttentionBlock(nn.Module):
         self.attention_1 = SelfAttention(n_heads, channels, channels, in_proj_bias=False)
 
         self.layernorm_2 = nn.LayerNorm(channels)
-        self.attention_2 = CrossAttention(n_heads, channels, d_context, in_proj_bias=False)
+        self.attention_2 = CrossAttention(n_heads, channels, d_context, channels, in_proj_bias=False)
 
         self.layernorm_3 = nn.LayerNorm(channels)
         self.linear_geglu_1 = nn.Linear(channels, 4 * channels * 2)
-        self.linear_geglu_2 = nn.Linear(4 * channels * 2, channels)
+        self.linear_geglu_2 = nn.Linear(4 * channels, channels)
 
         self.conv_output = nn.Conv2d(channels, channels, kernel_size=1, padding=0)
 
@@ -142,28 +153,32 @@ class UNetAttentionBlock(nn.Module):
         return self.conv_output(x) + residue_long
 
 
+n=0
 class UNetResidualBlock(nn.Module):
     def __init__(self, in_channels: int, out_channels: int, d_time=1280):
         super().__init__()
-        self.groupnorm_features = nn.GroupNorm(32, in_channels)
-        self.conv_features = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
+        global n
+        self.n = n
+        n+=1
+        self.groupnorm_feature = nn.GroupNorm(32, in_channels)
+        self.conv_feature = nn.Conv2d(in_channels, out_channels, kernel_size=3, padding=1)
         self.linear_time = nn.Linear(d_time, out_channels)
 
         self.groupnorm_merged = nn.GroupNorm(32, out_channels)
         self.conv_merged = nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1)
 
         if in_channels == out_channels:
-            self.res_con = nn.Identity()
+            self.residual_layer = nn.Identity()
         else:
-            self.res_con = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0)
+            self.residual_layer = nn.Conv2d(in_channels, out_channels, kernel_size=1, padding=0)
 
     def forward(self, features: torch.Tensor, time: torch.Tensor):
 
         residue = features
 
-        features = self.groupnorm_features(features)
+        features = self.groupnorm_feature(features)
         features = F.silu(features)
-        features = self.conv_features(features)
+        features = self.conv_feature(features)
 
         time = F.silu(time)
         time = self.linear_time(time)
@@ -174,7 +189,7 @@ class UNetResidualBlock(nn.Module):
         merged = F.silu(merged)
         merged = self.conv_merged(merged)
 
-        return merged + self.res_con(residue)
+        return merged + self.residual_layer(residue)
 
 
 class UNetOutLayer(nn.Module):

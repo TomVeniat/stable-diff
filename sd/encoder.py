@@ -41,7 +41,7 @@ class VAE_Encoder(nn.Sequential):
             nn.GroupNorm(32, 4 * dim),
 
             nn.SiLU(),
-            nn.Conv2d(2 * dim, 8, kernel_size=3, padding=1),
+            nn.Conv2d(4 * dim, 8, kernel_size=3, padding=1),
             nn.Conv2d(8, 8, kernel_size=1, padding=0),
         )
 
